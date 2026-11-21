@@ -9,10 +9,13 @@
     <OutFile>.log          完整运行日志（stdout + stderr）
     <OutFile>.status.json  机器可读的结果：后端、退出码、耗时、是否超时、STATUS 行
 
-  Claude 自己的子 agent 不走这个脚本，直接用 Agent 工具。
+  另外每次运行都会往 <OutFile 所在目录>\dispatch-log.md 追加一行派工记录
+  （时间、任务、后端、模型、模式、结果、耗时、备注），用 -Task 和 -Note 填任务名和备注。
+
+  Claude 自己的子 agent 不走这个脚本，直接用 Agent 工具；它的派工记录由主控按同样格式手动追加。
 
 .EXAMPLE
-  ./run-agent.ps1 -Backend codex -WorkDir D:\proj -PromptFile .orchestrate\x\task-1-prompt.md -OutFile .orchestrate\x\task-1-out.md -Mode write
+  ./run-agent.ps1 -Backend codex -WorkDir D:\proj -PromptFile .orchestrate\x\task-1-prompt.md -OutFile .orchestrate\x\task-1-out.md -Mode write -Model gpt-5.5 -Task "任务 1 实现：导出 CSV"
 #>
 param(
   [Parameter(Mandatory)][ValidateSet('codex', 'opencode')][string]$Backend,
@@ -21,7 +24,9 @@ param(
   [Parameter(Mandatory)][string]$OutFile,
   [ValidateSet('read', 'write')][string]$Mode = 'read',
   [string]$Model = '',
-  [int]$TimeoutMin = 60
+  [int]$TimeoutMin = 60,
+  [string]$Task = '',   # 派工记录里的任务名，例如 "任务 2 审查：登录接口"
+  [string]$Note = ''    # 派工记录里的备注，例如 "Go 额度用完，改用免费模型"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -139,4 +144,20 @@ $result = [ordered]@{
   logFile     = $LogFile
 }
 $result | ConvertTo-Json | Out-File -LiteralPath $StatusFile -Encoding utf8
+
+# ---- 派工记录：追加到 OutFile 同目录的 dispatch-log.md ----
+function Format-Cell([string]$s) { ($s -replace '\|', '/' -replace '\r?\n', ' ').Trim() }
+$dispatchLog = Join-Path (Split-Path $OutFile) 'dispatch-log.md'
+$taskName = if ($Task) { $Task } else { [IO.Path]::GetFileNameWithoutExtension($OutFile) }
+$modelName = if ($Model) { $Model } else { '(CLI 默认)' }
+$dur = $result.durationSec
+$durText = if ($dur -ge 60) { '{0}m{1:00}s' -f [int][math]::Floor($dur / 60), ($dur % 60) } else { "${dur}s" }
+$row = '| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |' -f (Get-Date -Format 'MM-dd HH:mm'), (Format-Cell $taskName), $Backend, (Format-Cell $modelName), $Mode, $statusLine, $durText, (Format-Cell $Note)
+$utf8 = New-Object System.Text.UTF8Encoding $false
+if (-not (Test-Path -LiteralPath $dispatchLog)) {
+  [IO.File]::WriteAllText($dispatchLog, "| 时间 | 任务 | 后端 | 模型 | 模式 | 结果 | 耗时 | 备注 |`n|---|---|---|---|---|---|---|---|`n", $utf8)
+}
+[IO.File]::AppendAllText($dispatchLog, "$row`n", $utf8)
+
+$result['dispatchLog'] = $dispatchLog
 $result | ConvertTo-Json

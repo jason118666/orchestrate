@@ -72,11 +72,12 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 **调用外部后端**：用 PowerShell 工具运行（耗时长，一律 `run_in_background: true`，完成时你会收到通知，不要轮询）：
 
 ```powershell
-& "$HOME\.claude\skills\orchestrate\run-agent.ps1" -Backend codex -Mode write -WorkDir <目录> -PromptFile <提示词文件> -OutFile <输出文件> [-Model <模型>] [-TimeoutMin 60]
+& "$HOME\.claude\skills\orchestrate\run-agent.ps1" -Backend codex -Mode write -WorkDir <目录> -PromptFile <提示词文件> -OutFile <输出文件> -Model <模型> -Task "<任务 N 角色：名字>" [-Note <备注>] [-TimeoutMin 60]
 ```
 
 - `-Mode read`：只读（Codex 用只读沙箱；OpenCode 在提示里禁止改文件）。探索和审查用这个。
 - `-Mode write`：允许改工作目录里的文件。
+- `-Task` 必填（写法见第 2 节「派工记录」），`-Note` 写换模型、降级之类的原因。
 - 结果看 `<输出文件>.status.json` 里的 `status`，详情看 `<输出文件>`，出错看 `<输出文件>.log`。
 
 ## 2. 工作区和台账
@@ -84,19 +85,54 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 对话会被压缩，压缩后你会忘了做到哪。**进度只以文件为准。**
 
 ```
-.orchestrate/<任务短名>/
-  progress.md        台账（只追加）
-  plan.md            计划
-  explore-N.md       探索报告
-  task-N-brief.md    任务需求
-  task-N-prompt.md   发给外部后端的完整提示词
-  task-N-report.md   工人的报告
-  task-N-diff.txt    给审查者的 diff
+.orchestrate/
+  history.md         所有任务的派工历史（永久保留，不删）
+  <任务短名>/
+    progress.md        台账（只追加）
+    dispatch-log.md    本任务的派工记录（谁用什么模型做了什么）
+    plan.md            计划
+    explore-N.md       探索报告
+    task-N-brief.md    任务需求
+    task-N-prompt.md   发给外部后端的完整提示词
+    task-N-report.md   工人的报告
+    task-N-diff.txt    给审查者的 diff
 ```
 
 - 是 git 仓库就把 `.orchestrate/` 加进 `.gitignore`。
 - **开始前先看这个目录在不在**。在就是断点续做：读 `progress.md` 和 `git log`，从第一条没完成的任务接着做，不重做已完成的。
 - 台账格式：`任务 2: 开始 BASE=a1b2c3d 后端=codex` / `任务 2: 完成 a1b2c3d..e4f5a6b 审查通过` / `裁决: <决定> — <原因> — <错了的代价>`
+
+### 派工记录（每次派活都要记，并显示给用户）
+
+目的：让用户随时看到**哪个模型做了哪个任务**，看完可能会要求调整分工，调整后要写回本 skill。
+
+**记录**：每派一次活，`dispatch-log.md` 就多一行。格式固定：
+
+```
+| 时间 | 任务 | 后端 | 模型 | 模式 | 结果 | 耗时 | 备注 |
+|---|---|---|---|---|---|---|---|
+| 11-21 10:02 | 主控 | claude | claude-opus-5-5 | - | - | - | 本会话主控模型 |
+| 11-21 10:03 | 探索 1：数据层 | claude | haiku | read | DONE | 48s | |
+| 11-21 10:09 | 任务 1 实现：导出 CSV | codex | gpt-5.5 | write | DONE | 4m12s | |
+| 11-21 10:15 | 任务 1 审查：导出 CSV | opencode | opencode-go/deepseek-v4-pro | read | DONE | 1m05s | |
+```
+
+- 建工作区时就创建这个文件（写好表头），第一行记**主控自己**用的模型。
+- **外部后端**（codex / opencode）：`run-agent.ps1` 会自动追加，你只要传 `-Task`。
+- **Claude 工人**：Agent 返回后，你按同样格式手动追加一行。模型写你传给 Agent 的 `model`；耗时能从结果里拿到就写，拿不到写 `-`。
+- 任务名写法：`探索 N：方向` / `任务 N 实现：名字` / `任务 N 审查：名字` / `任务 N 修复第 R 轮：名字` / `最终审查`。
+- 换模型、换后端、额度用完降级、用户指定模型：写进 `备注`。
+
+**显示给用户**（在对话里直接写出来，保持简短）：
+
+1. **计划写完后**：贴一张分工表，`| 任务 | 角色 | 后端 | 模型 |`，让用户一眼看到打算怎么分。
+2. **每个工人返回后**：一行，例如 `▸ 任务 1 实现 — codex / gpt-5.5 — DONE — 4m12s`。
+3. **换模型或降级时**：立刻一行说明原因。
+4. **全部结束时**：原样贴出 `dispatch-log.md` 的整张表，下面加一行汇总，例如 `共派工 7 次：claude 3 次（haiku 2、opus 1），codex 2 次，opencode 2 次`。
+
+**长期保存**：结束时把本次的整张表追加到 `.orchestrate/history.md`，前面加标题 `## <日期> <任务短名>`。这个文件不随任务目录删除。
+
+**用户要求调整时**：用户看了记录说"实现别用 X""审查改用 Y"之类，就修改本 skill 的默认分工或默认模型表（`~/.claude/skills/orchestrate/SKILL.md`），然后在 skill 目录里提交并推送到 GitHub（这个目录是 git 仓库，已经配好远程）。改了什么用一句话告诉用户。
 
 ## 3. 探索（只读，可并行）
 
@@ -145,7 +181,7 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 1. 记 BASE：`git rev-parse HEAD`，写台账。
 2. 把计划里这个任务原样写进 `task-N-brief.md`。
 3. 按 `prompts.md` 的「实现」填好提示词。只放：一句话位置、brief 路径、上游接口、你对模糊点的决定、报告路径。**不放对话历史和前面任务的总结。**
-4. 派发：Claude 工人把提示词作为 Agent 的 prompt，**明确写 `model`**（不写会继承你当前最贵的模型）；外部工人把提示词写进 `task-N-prompt.md` 再调 `run-agent.ps1`。
+4. 派发：Claude 工人把提示词作为 Agent 的 prompt，**明确写 `model`**（不写会继承你当前最贵的模型）；外部工人把提示词写进 `task-N-prompt.md` 再调 `run-agent.ps1`（带 `-Task`）。返回后按第 2 节记录并显示一行。
 5. 工人完成后，你检查 `git status`：**改动超出"负责文件"的，先处理越界再继续**（还原越界部分或写裁决）。
 6. 你来提交：`git add <负责文件> && git commit -m "任务 N：<名字>"`，记下 HEAD。
 
@@ -183,8 +219,9 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 
 1. 跑完整测试。
 2. 派最强的模型审查整个分支（第一个 BASE..HEAD），连同台账里的 Minor 和裁决。
-3. 修完后向用户汇报：每个任务做了什么、用了哪个后端、提交范围、遗留问题、测试结果。
-4. 问用户是否删除 `.orchestrate/<任务短名>/` 和临时 worktree。**不 push、不 merge 到主分支。**
+3. 修完后向用户汇报：每个任务做了什么、提交范围、遗留问题、测试结果，再贴出完整派工表和汇总行（第 2 节）。
+4. 把派工表追加到 `.orchestrate/history.md`。
+5. 问用户是否删除 `.orchestrate/<任务短名>/` 和临时 worktree（`history.md` 保留）。**不 push、不 merge 到主分支。**
 
 ## 8. 只在这些情况停下来问用户
 
