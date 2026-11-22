@@ -56,7 +56,7 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 | 探索：读代码、找相关文件（只读） | Flash | haiku | sonnet（L 规模、探索结果决定整个计划时可直接用） |
 | 非核心中等活：1–3 个非核心文件的小功能、写测试、有复现步骤的小 bug、按规格调样式 | Flash | Sol（low） | sonnet |
 | 核心实现和修复：核心逻辑、权限/安全、数据迁移、并发、跨模块 | Sol | sonnet | — |
-| 疑难：找 bug 根因、Sol 修 2 轮还没解决 | Astra | opus | — |
+| 疑难：找 bug 根因、Sol 修 2 轮还没解决 | opus | Astra | — |
 | 设计/审美：判断好不好看、从零设计页面 | opus（重要页面）/ sonnet（微调） | — | — |
 | 审查非核心活 | Terra | sonnet | — |
 | 审查核心活 | 和实现者不同家：Codex 写的给 sonnet 审，Claude 写的给 Sol 审 | — | — |
