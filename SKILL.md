@@ -45,7 +45,7 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 |---|---|---|
 | `codex` | `gpt-6.2-sol`（用户机器上的默认；没有就用 `gpt-5.5`） | `gpt-6.2-sol`（Codex 不分档） |
 | `claude` | `sonnet` | `sonnet` |
-| `opencode` | 非核心的中等活 | ① `opencode/deepseek-v4.1-flash-free` → ② 用完再用 `opencode-go/deepseek-v4.1-flash` |
+| `opencode` | 不派核心重活（非核心的中等活可以，见下方） | ① `opencode/deepseek-v4.1-flash-free` → ② 用完再用 `opencode-go/deepseek-v4.1-flash` |
 
 **分工原则（用户 2026-11 指定）**：主要干活的是 **Codex**，其次 Claude。OpenCode **只用 DeepSeek 4.1 Flash**（最便宜）、只干轻活：**先用免费版，用完再用 Go 版**。OpenCode 的其他模型（`big-pickle`、Pro、gemini、kimi 等）**一律不用**，除非用户指定。重活（核心逻辑、权限/安全、复杂实现、修复、审查）交给 `codex gpt-6.2-sol` 或 `claude sonnet`。
 
