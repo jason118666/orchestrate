@@ -22,7 +22,7 @@ description: 多 agent 编排。用户输入 /orchestrate，或要求"用多个 
 |---|---|---|
 | `claude` | Agent 工具（`subagent_type` + `model`） | 探索、审查、需要理解全局的实现 |
 | `codex` | `run-agent.ps1 -Backend codex` | **主力**：实现、修复、重活 |
-| `opencode` | `run-agent.ps1 -Backend opencode` | 只干轻活（机械搬运、批量小改、跑脚本、装依赖、浏览器走查） |
+| `opencode` | `run-agent.ps1 -Backend opencode` | 轻活和非核心的中等活（见下方清单） |
 
 **默认分工**（用户可以在请求里改，例如"全部用 codex"）：
 
@@ -45,7 +45,7 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 |---|---|---|
 | `codex` | `gpt-6.2-sol`（用户机器上的默认；没有就用 `gpt-5.5`） | `gpt-6.2-sol`（Codex 不分档） |
 | `claude` | `sonnet` | `sonnet` |
-| `opencode` | **不派重活** | ① `opencode/deepseek-v4.1-flash-free` → ② 用完再用 `opencode-go/deepseek-v4.1-flash` |
+| `opencode` | 非核心的中等活 | ① `opencode/deepseek-v4.1-flash-free` → ② 用完再用 `opencode-go/deepseek-v4.1-flash` |
 
 **分工原则（用户 2026-11 指定）**：主要干活的是 **Codex**，其次 Claude。OpenCode **只用 DeepSeek 4.1 Flash**（最便宜）、只干轻活：**先用免费版，用完再用 Go 版**。OpenCode 的其他模型（`big-pickle`、Pro、gemini、kimi 等）**一律不用**，除非用户指定。重活（核心逻辑、权限/安全、复杂实现、修复、审查）交给 `codex gpt-6.2-sol` 或 `claude sonnet`。
 
@@ -56,7 +56,16 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 - 看页面（它支持图片输入）：打开页面截图，检查能不能打开、有没有报错、按钮/链接能不能点、内容是否和给定清单一致
 - 整理资料：汇总日志、列出文件、按模板生成文档
 
-**不算轻活**（给 Codex / Claude）：判断页面好不好看、找 bug 根因、设计方案、改核心逻辑、审查代码。
+**非核心的中等活**也可以派 OpenCode：
+
+- 只碰 1–3 个非核心文件的独立小功能
+- 写或补测试
+- 有明确复现步骤的小 bug
+- 按给定规格调页面样式
+
+条件：**必须交给 Codex 审查**；回报 `BLOCKED`，或者修复循环第 2 轮还不过，就改派给 Codex，不再给它试。
+
+**只给 Codex / Claude**：核心逻辑、权限/安全、数据迁移、并发、跨模块改动、找 bug 根因、设计方案、判断页面好不好看、审查代码。
 
 **思考强度**由主控按任务决定：简单搬运、机械改动用低档；核心逻辑、权限、并发、疑难排查用高档。Codex 用 `-c model_reasoning_effort="low|medium|high"`，OpenCode 用 `--variant`，Claude 子 agent 用 Agent 的 `effort`（用户没明确要求时不设）。不确定就 medium，并在台账里写一句。
 
