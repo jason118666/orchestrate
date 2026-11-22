@@ -129,7 +129,7 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 | 11-21 10:02 | 主控 | claude | claude-opus-5-5 | - | - | - | 本会话主控模型 |
 | 11-21 10:03 | 探索 1：数据层 | claude | haiku | read | DONE | 48s | |
 | 11-21 10:09 | 任务 1 实现：导出 CSV | codex | gpt-5.5 | write | DONE | 4m12s | |
-| 11-21 10:15 | 任务 1 审查：导出 CSV | opencode | opencode-go/deepseek-v4-pro | read | DONE | 1m05s | |
+| 11-21 10:15 | 任务 2 实现：批量改文案 | opencode | opencode/deepseek-v4.1-flash-free | write | DONE | 1m05s | |
 ```
 
 - 建工作区时就创建这个文件（写好表头），第一行记**主控自己**用的模型。
