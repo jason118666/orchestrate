@@ -21,14 +21,14 @@ description: 多 agent 编排。用户输入 /orchestrate，或要求"用多个 
 | 后端 | 怎么调用 | 适合 |
 |---|---|---|
 | `claude` | Agent 工具（`subagent_type` + `model`） | 探索、审查、需要理解全局的实现 |
-| `codex` | `run-agent.ps1 -Backend codex` | 实现（默认）、修复 |
-| `opencode` | `run-agent.ps1 -Backend opencode` | 第二实现者、换模型做交叉审查、便宜的批量小改 |
+| `codex` | `run-agent.ps1 -Backend codex` | **主力**：实现、修复、重活 |
+| `opencode` | `run-agent.ps1 -Backend opencode` | 只干轻活（机械搬运、批量小改、跑脚本、装依赖、浏览器走查） |
 
 **默认分工**（用户可以在请求里改，例如"全部用 codex"）：
 
 - 探索 → `claude`，`Explore`，`haiku`
 - 实现 → `codex`；不可用时 → `claude`，`general-purpose`，`sonnet`
-- 审查 → 和实现者**不同**的后端（Codex 写的给 Claude 审，Claude 写的给 Codex 或 OpenCode 审）。不同模型容易发现对方的盲点。
+- 审查 → 和实现者**不同**的后端（Codex 写的给 Claude 审，Claude 或 OpenCode 写的给 Codex 审）。不同模型容易发现对方的盲点。OpenCode 不做审查。
 - 最终审查 → `claude`，`opus`
 
 **第一次使用时检测后端**（一个会话只做一次）：
@@ -45,25 +45,23 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 |---|---|---|
 | `codex` | `gpt-6.2-sol`（用户机器上的默认；没有就用 `gpt-5.5`） | `gpt-6.2-sol`（Codex 不分档） |
 | `claude` | `sonnet` | `sonnet` |
-| `opencode`，**有 Go 订阅** | **不派重活**（重活交给 codex gpt-6.2-sol 或 claude sonnet） | `opencode-go/deepseek-v4.1-flash` |
-| `opencode`，**无 Go 订阅**，或 **Go 到限额后用户确认可以用免费** | `opencode/big-pickle`（只在 codex 和 claude 都不可用时） | `opencode/deepseek-v4.1-flash-free` |
+| `opencode` | **不派重活** | ① `opencode/deepseek-v4.1-flash-free` → ② 用完再用 `opencode-go/deepseek-v4.1-flash` |
 
-**分工原则（用户 2026-11 指定）**：OpenCode Go 套餐额度有限，只用 `deepseek-v4.1-flash` 干轻活（机械搬运、批量小改、跑脚本、装依赖、浏览器走查）；重活（核心逻辑、权限/安全、复杂实现、修复、交叉审查）交给 `codex gpt-6.2-sol` 或 `claude sonnet`。Go 的活**尽量都派 `deepseek-v4.1-flash`**（额度高）；`deepseek-v4-pro` 等 Pro 模型额度很少，不要用，除非用户指定。
+**分工原则（用户 2026-11 指定）**：主要干活的是 **Codex**，其次 Claude。OpenCode **只用 DeepSeek 4.1 Flash**（最便宜）、只干轻活：**先用免费版，用完再用 Go 版**。OpenCode 的其他模型（`big-pickle`、Pro、gemini、kimi 等）**一律不用**，除非用户指定。重活（核心逻辑、权限/安全、复杂实现、修复、审查）交给 `codex gpt-6.2-sol` 或 `claude sonnet`。
 
 **思考强度**由主控按任务决定：简单搬运、机械改动用低档；核心逻辑、权限、并发、疑难排查用高档。Codex 用 `-c model_reasoning_effort="low|medium|high"`，OpenCode 用 `--variant`，Claude 子 agent 用 Agent 的 `effort`（用户没明确要求时不设）。不确定就 medium，并在台账里写一句。
 
-**OpenCode 选哪一套**（一个会话判断一次）：
+**OpenCode 用哪个**（一个会话判断一次，运行 `opencode models` 看有哪些）：
 
-1. 运行 `opencode models`，输出里有 `opencode-go/` 开头的模型 → 有 Go 订阅，用 Go 套；没有 → 用免费套。
-2. Go 的模型 ID 会随官方调整。表里的 ID 在 `opencode models` 输出里找不到时，从输出里挑同系列最接近的，写进台账；找不到同系列就直接用免费套。
-3. Go 到限额的处理见第 6 节「限额」。**不要自动改用免费套**，必须先问用户。
-4. 免费模型可能下线。`opencode/` 模型报"不存在"时，从 `opencode models` 里挑一个带 `-free` 的顶上，写进台账。
+1. 先用 `opencode/deepseek-v4.1-flash-free`。
+2. 免费版到限额（`QUOTA` / `STALLED` 探测确认）→ 本会话后面改用 `opencode-go/deepseek-v4.1-flash`，**不用问用户**，派工表备注写一句，对话里告诉用户一行。同一任务用 Go 版重派一次。
+3. Go 版也到限额 → 按第 6 节「限额」停下来找用户。没有 Go 订阅（列表里没有 `opencode-go/`）就直接停下来找用户。
+4. 模型 ID 找不到（官方改名或下线）→ 只在 DeepSeek Flash 系列里找最接近的，写进台账；找不到就告诉用户，不换别的系列。
 
 **设计 / 审美类任务**（界面、页面、配色排版、图表、PPT、图标、文案语气这类"好不好看"占主导的活）：
 
 - 默认用 `claude` 后端：从零设计或重要页面 → `opus`；改样式、微调 → `sonnet`。这是经验判断，没做过本环境的对比测试。
-- 想换口味或省额度：OpenCode Go 的 `opencode-go/gemini-4-argon`、`opencode-go/kimi-k3.1-pro` 可作备选。**未验证**，先拿一个小任务试，效果好坏写进台账，之后再决定是否常用。
-- 免费套不用于设计活，除非用户指定。
+- OpenCode 不用于设计活，除非用户指定。
 - 提示词里写清风格方向、参考、配色字体等约束，不要只写"做好看点"。
 - 审查必须看**渲染结果**（打开页面截图或预览），不能只读代码。审查者仍然和实现者用不同后端。
 - 纯逻辑、数据处理、脚本类任务不按这条走，仍按上面的默认表。
@@ -225,16 +223,16 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
   `opencode run -m <模型> '只回复OK'`，60 秒超时。也挂住或报额度错误 → 按 `QUOTA` 处理。
 - 单次派工最长 20 分钟（`-TimeoutMin`）。超时且日志里有限额字样同样是 `QUOTA`。
 
-**发现后怎么做**：
+**发现后怎么做**（唯一例外：OpenCode **免费版** DeepSeek Flash 到限额时，按第 1 节直接换 Go 版，不走下面流程）：
 
 1. **立刻停止往这个后端派新任务**。已经在跑的其他工人等它们跑完，但不再派新的，包括别的后端。
-2. **不自动换模型**，尤其**不能自动改用 OpenCode 免费模型**。
+2. **不自动换模型**，也不换成 OpenCode 的其他模型。
 3. 台账记一句，派工表备注写明。
 4. 结束本轮，向用户汇报（简短）：
    - 哪个后端、哪个模型到了限额，当时在做哪个任务；
    - `quotaHint` 原文，有重置时间就写出来；
    - 已完成的任务和还剩的任务；
-   - 让用户选：**等额度恢复后继续** / **改用 OpenCode 免费模型** / **改用 Claude 或另一个后端** / **先暂停**。
+   - 让用户选：**等额度恢复后继续** / **改用 Codex 或 Claude** / **先暂停**。
 5. 用户选了之后按选择继续，选择写进台账，本会话后面不再重复问同一个后端。
 
 **不要让同一个工人原样重试。** 它卡住了，就一定要改变一点什么。
