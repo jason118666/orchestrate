@@ -21,15 +21,8 @@ description: 多 agent 编排。用户输入 /orchestrate，或要求"用多个 
 | 后端 | 怎么调用 | 适合 |
 |---|---|---|
 | `claude` | Agent 工具（`subagent_type` + `model`） | 探索、审查、需要理解全局的实现 |
-| `codex` | `run-agent.ps1 -Backend codex` | **主力**：实现、修复、重活 |
-| `opencode` | `run-agent.ps1 -Backend opencode` | 轻活和非核心的中等活（见下方清单） |
-
-**默认分工**（用户可以在请求里改，例如"全部用 codex"）：
-
-- 探索 → `claude`，`Explore`，`haiku`
-- 实现 → `codex`；不可用时 → `claude`，`general-purpose`，`sonnet`
-- 审查 → 和实现者**不同**的后端（Codex 写的给 Claude 审，Claude 或 OpenCode 写的给 Codex 审）。不同模型容易发现对方的盲点。OpenCode 不做审查。
-- 最终审查 → `claude`，`opus`
+| `codex` | `run-agent.ps1 -Backend codex` | **写代码主力**：实现、修复、重活 |
+| `opencode` | `run-agent.ps1 -Backend opencode` | 能做好的活优先给它（见「选模型」） |
 
 **第一次使用时检测后端**（一个会话只做一次）：
 
@@ -39,33 +32,39 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 
 没装的后端，相关任务自动改用 `claude`，并告诉用户一句。
 
-**默认模型**（每次调用外部后端都显式传 `-Model`，不要靠 CLI 自己的默认。用户在请求里指定了模型则按用户的）：
+### 选模型（用户 2026-11 指定）
 
-| 后端 | 重活（实现、修复、交叉审查） | 轻活（便宜的批量小改） |
+**优先级**：几个模型都能做好的活，**先用 OpenCode 的 DeepSeek 4.1 Flash**，其次 Codex 或 Claude。前提是质量和开发速度不打折，Flash 做不好的活不要硬派。Codex 是写代码的主力。用户在请求里指定了模型则按用户的。每次调用外部后端都显式传 `-Model`。
+
+**可用模型**（价格是每百万输出 token 的 credit，只用来比较贵贱）：
+
+| 简称 | 实际模型 | 特点 |
 |---|---|---|
-| `codex` | `gpt-6.2-sol`（用户机器上的默认；没有就用 `gpt-5.5`） | `gpt-6.2-sol`（Codex 不分档） |
-| `claude` | `sonnet` | `sonnet` |
-| `opencode` | 不派核心重活（非核心的中等活可以，见下方） | ① `opencode/deepseek-v4.1-flash-free` → ② 用完再用 `opencode-go/deepseek-v4.1-flash` |
+| Flash | `opencode/deepseek-v4.1-flash-free` → 用完换 `opencode-go/deepseek-v4.1-flash` | 最便宜，能看图片。OpenCode 的其他模型一律不用 |
+| Luna | codex `gpt-6-luna` | 12.5，格式固定、重复性的活。思考强度从 high 开始 |
+| Terra | codex `gpt-6.1-terra` | 125，快，擅长看截图/图表 |
+| Sol | codex `gpt-6.2-sol` | 250，**写代码主力** |
+| Astra | codex `gpt-6.2-astra` | 1000，最强，只给疑难问题 |
+| haiku / sonnet / opus | claude 子 agent | 由便宜到贵 |
 
-**分工原则（用户 2026-11 指定）**：主要干活的是 **Codex**，其次 Claude。OpenCode **只用 DeepSeek 4.1 Flash**（最便宜）、只干轻活：**先用免费版，用完再用 Go 版**。OpenCode 的其他模型（`big-pickle`、Pro、gemini、kimi 等）**一律不用**，除非用户指定。重活（核心逻辑、权限/安全、复杂实现、修复、审查）交给 `codex gpt-6.2-sol` 或 `claude sonnet`。
+**按活选**（从左到右依次尝试，前一个不可用、到限额或做不好再用下一个）：
 
-**轻活 = 照着明确指示做、做错了一眼能看出来的活**，可以派 OpenCode：
+| 活 | 首选 | 次选 | 再次 |
+|---|---|---|---|
+| 轻活：批量改名/改文案/改配置、跑命令和测试并汇报、整理资料 | Flash | Luna | haiku |
+| 看页面：截图检查能否打开、有无报错、按钮能否点、内容是否和清单一致 | Flash | Terra | sonnet |
+| 探索：读代码、找相关文件（只读） | Flash | haiku | sonnet（L 规模、探索结果决定整个计划时可直接用） |
+| 非核心中等活：1–3 个非核心文件的小功能、写测试、有复现步骤的小 bug、按规格调样式 | Flash | Sol（low） | sonnet |
+| 核心实现和修复：核心逻辑、权限/安全、数据迁移、并发、跨模块 | Sol | sonnet | — |
+| 疑难：找 bug 根因、Sol 修 2 轮还没解决 | Astra | opus | — |
+| 设计/审美：判断好不好看、从零设计页面 | opus（重要页面）/ sonnet（微调） | — | — |
+| 审查非核心活 | Terra | sonnet | — |
+| 审查核心活 | 和实现者不同家：Codex 写的给 sonnet 审，Claude 写的给 Sol 审 | — | — |
+| 最终审查 | opus | — | — |
 
-- 机械改动：批量改名、改文案/配置项、按给定格式搬运代码、补注释
-- 跑命令：装依赖、跑脚本/测试/构建，并汇报输出
-- 看页面（它支持图片输入）：打开页面截图，检查能不能打开、有没有报错、按钮/链接能不能点、内容是否和给定清单一致
-- 整理资料：汇总日志、列出文件、按模板生成文档
-
-**非核心的中等活**也可以派 OpenCode：
-
-- 只碰 1–3 个非核心文件的独立小功能
-- 写或补测试
-- 有明确复现步骤的小 bug
-- 按给定规格调页面样式
-
-条件：**必须交给 Codex 审查**；回报 `BLOCKED`，或者修复循环第 2 轮还不过，就改派给 Codex，不再给它试。
-
-**只给 Codex / Claude**：核心逻辑、权限/安全、数据迁移、并发、跨模块改动、找 bug 根因、设计方案、判断页面好不好看、审查代码。
+- Flash **不做审查**，也不做核心活和设计。
+- Flash 做的活：回报 `BLOCKED`，或者修复循环第 2 轮还不过 → 改派下一个，不再给它试。
+- 计划里每个任务都写上选了谁；没选首选的，在派工表备注里写原因。
 
 **思考强度**由主控按任务决定：简单搬运、机械改动用低档；核心逻辑、权限、并发、疑难排查用高档。Codex 用 `-c model_reasoning_effort="low|medium|high"`，OpenCode 用 `--variant`，Claude 子 agent 用 Agent 的 `effort`（用户没明确要求时不设）。不确定就 medium，并在台账里写一句。
 
@@ -82,7 +81,7 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 - OpenCode 不用于设计活，除非用户指定。
 - 提示词里写清风格方向、参考、配色字体等约束，不要只写"做好看点"。
 - 审查必须看**渲染结果**（打开页面截图或预览），不能只读代码。审查者仍然和实现者用不同后端。
-- 纯逻辑、数据处理、脚本类任务不按这条走，仍按上面的默认表。
+- 纯逻辑、数据处理、脚本类任务不按这条走，仍按「选模型」表。
 
 **中文乱码**：Windows 下 PowerShell 的输出被管道接走时，中文可能变成 `?`（实测：不设置时输出 `?????`，先执行 `[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)` 后正常）。
 
@@ -145,8 +144,8 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 | 时间 | 任务 | 后端 | 模型 | 模式 | 结果 | 耗时 | 备注 |
 |---|---|---|---|---|---|---|---|
 | 11-21 10:02 | 主控 | claude | claude-opus-5-5 | - | - | - | 本会话主控模型 |
-| 11-21 10:03 | 探索 1：数据层 | claude | haiku | read | DONE | 48s | |
-| 11-21 10:09 | 任务 1 实现：导出 CSV | codex | gpt-5.5 | write | DONE | 4m12s | |
+| 11-21 10:03 | 探索 1：数据层 | opencode | opencode/deepseek-v4.1-flash-free | read | DONE | 48s | |
+| 11-21 10:09 | 任务 1 实现：导出 CSV | codex | gpt-6.2-sol | write | DONE | 4m12s | |
 | 11-21 10:15 | 任务 2 实现：批量改文案 | opencode | opencode/deepseek-v4.1-flash-free | write | DONE | 1m05s | |
 ```
 
@@ -159,13 +158,13 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 **显示给用户**（在对话里直接写出来，保持简短）：
 
 1. **计划写完后**：贴一张分工表，`| 任务 | 角色 | 后端 | 模型 |`，让用户一眼看到打算怎么分。
-2. **每个工人返回后**：一行，例如 `▸ 任务 1 实现 — codex / gpt-5.5 — DONE — 4m12s`。
+2. **每个工人返回后**：一行，例如 `▸ 任务 1 实现 — codex / gpt-6.2-sol — DONE — 4m12s`。
 3. **换模型或降级时**：立刻一行说明原因。
 4. **全部结束时**：原样贴出 `dispatch-log.md` 的整张表，下面加一行汇总，例如 `共派工 7 次：claude 3 次（haiku 2、opus 1），codex 2 次，opencode 2 次`。
 
 **长期保存**：结束时把本次的整张表追加到 `.orchestrate/history.md`，前面加标题 `## <日期> <任务短名>`。这个文件不随任务目录删除。
 
-**用户要求调整时**：用户看了记录说"实现别用 X""审查改用 Y"之类，就修改本 skill 的默认分工或默认模型表（`~/.claude/skills/orchestrate/SKILL.md`），然后在 skill 目录里提交并推送到 GitHub（这个目录是 git 仓库，已经配好远程）。改了什么用一句话告诉用户。
+**用户要求调整时**：用户看了记录说"实现别用 X""审查改用 Y"之类，就修改本 skill 的「选模型」表（`~/.claude/skills/orchestrate/SKILL.md`），然后在 skill 目录里提交并推送到 GitHub（这个目录是 git 仓库，已经配好远程）。改了什么用一句话告诉用户。
 
 ## 3. 探索（只读，可并行）
 
@@ -186,7 +185,7 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 - 只读参考：…
 - 依赖：任务 M 产出的 <接口签名>（无则写"无"）
 - 验收：测试命令或可观察的行为
-- 后端 / 模型：codex / gpt-5.5（按第 1 节）
+- 后端 / 模型：codex / gpt-6.2-sol（按第 1 节「选模型」，没选首选的写原因）
 ```
 
 写完做冲突扫描，结果写进台账：
