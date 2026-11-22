@@ -49,6 +49,15 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 
 **分工原则（用户 2026-11 指定）**：主要干活的是 **Codex**，其次 Claude。OpenCode **只用 DeepSeek 4.1 Flash**（最便宜）、只干轻活：**先用免费版，用完再用 Go 版**。OpenCode 的其他模型（`big-pickle`、Pro、gemini、kimi 等）**一律不用**，除非用户指定。重活（核心逻辑、权限/安全、复杂实现、修复、审查）交给 `codex gpt-6.2-sol` 或 `claude sonnet`。
 
+**轻活 = 照着明确指示做、做错了一眼能看出来的活**，可以派 OpenCode：
+
+- 机械改动：批量改名、改文案/配置项、按给定格式搬运代码、补注释
+- 跑命令：装依赖、跑脚本/测试/构建，并汇报输出
+- 看页面（它支持图片输入）：打开页面截图，检查能不能打开、有没有报错、按钮/链接能不能点、内容是否和给定清单一致
+- 整理资料：汇总日志、列出文件、按模板生成文档
+
+**不算轻活**（给 Codex / Claude）：判断页面好不好看、找 bug 根因、设计方案、改核心逻辑、审查代码。
+
 **思考强度**由主控按任务决定：简单搬运、机械改动用低档；核心逻辑、权限、并发、疑难排查用高档。Codex 用 `-c model_reasoning_effort="low|medium|high"`，OpenCode 用 `--variant`，Claude 子 agent 用 Agent 的 `effort`（用户没明确要求时不设）。不确定就 medium，并在台账里写一句。
 
 **OpenCode 用哪个**（一个会话判断一次，运行 `opencode models` 看有哪些）：
