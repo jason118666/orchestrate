@@ -43,15 +43,21 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 
 | 后端 | 重活（实现、修复、交叉审查） | 轻活（便宜的批量小改） |
 |---|---|---|
-| `codex` | `gpt-5.5` | `gpt-5.5`（Codex 不分档） |
-| `opencode`，**有 Go 订阅** | `opencode-go/deepseek-v4-pro`（备选 `opencode-go/glm-5.3`） | `opencode-go/deepseek-v4.1-flash` |
-| `opencode`，**无 Go / Go 额度用完** | `opencode/big-pickle` | `opencode/deepseek-v4.1-flash-free` |
+| `codex` | `gpt-6.2-sol`（用户机器上的默认；没有就用 `gpt-5.5`） | `gpt-6.2-sol`（Codex 不分档） |
+| `claude` | `opus` | `sonnet` |
+| `opencode`，**有 Go 订阅** | **不派重活**（重活交给 claude opus 或 codex gpt-6.2-sol） | `opencode-go/deepseek-v4.1-flash` |
+| `opencode`，**无 Go / Go 额度用完** | `opencode/big-pickle`（只在 codex 和 claude 都不可用时） | `opencode/deepseek-v4.1-flash-free` |
+
+**分工原则（用户 2026-11 指定）**：OpenCode Go 套餐额度有限，只用 `deepseek-v4.1-flash` 干轻活（机械搬运、批量小改、跑脚本、装依赖、浏览器走查）；重活（核心逻辑、权限/安全、复杂实现、修复、交叉审查）交给 `claude opus` 或 `codex gpt-6.2-sol`。`opencode-go/deepseek-v4-pro` 不要作为默认，用了额度很快耗光。
+
+**思考强度**由主控按任务决定：简单搬运、机械改动用低档；核心逻辑、权限、并发、疑难排查用高档。Codex 用 `-c model_reasoning_effort="low|medium|high"`，OpenCode 用 `--variant`，Claude 子 agent 用 Agent 的 `effort`（用户没明确要求时不设）。不确定就 medium，并在台账里写一句。
 
 **OpenCode 选哪一套**（一个会话判断一次）：
 
 1. 运行 `opencode models`，输出里有 `opencode-go/` 开头的模型 → 有 Go 订阅，用 Go 套；没有 → 用免费套。
 2. Go 的模型 ID 会随官方调整。表里的 ID 在 `opencode models` 输出里找不到时，从输出里挑同系列最接近的，写进台账；找不到同系列就直接用免费套。
 3. 用 Go 套时，任务失败且 `.log` 里出现 quota、limit、usage、429、insufficient 之类字样 → 判定额度用完，本会话后面全部改用免费套，台账记一句，并告诉用户。同一任务换免费套重派一次。
+   **额度用完时也可能不报错、只是一直没有输出**（实测：日志停在 `> build · <模型名>` 一行，多个 Go 模型同时挂住，免费的 `opencode/big-pickle` 正常）。所以每个 opencode 任务派出后 2–3 分钟内要看一眼日志有没有增长；不增长就用一句 `opencode run -m <模型> '只回复OK'`（加 timeout 60）测一下，同样挂住就按额度用完处理。不要等任务自己超时。
 4. 免费模型可能下线。`opencode/` 模型报"不存在"时，从 `opencode models` 里挑一个带 `-free` 的顶上，写进台账。
 
 **设计 / 审美类任务**（界面、页面、配色排版、图表、PPT、图标、文案语气这类"好不好看"占主导的活）：
@@ -68,6 +74,17 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 - 你自己运行含中文输出的 PowerShell 命令，开头先加上这一句。
 - 派给工人的提示词里也要带上这条（`prompts.md` 的实现模板已加）。
 - 看到 `?` 先别当文件坏了：用 `[IO.File]::ReadAllText(<路径>, [Text.Encoding]::UTF8)` 读一遍确认。文件本身通常是对的，只是显示被吃掉。
+
+**Codex 在 Windows 上的沙箱**（实测，Codex 0.166，配置里 `[windows] sandbox = "unelevated"` 时）：
+
+- 默认的 `unelevated` 沙箱下，工人启动任何子进程都会 `spawn EPERM`（连 `cmd` 都不行），所以起不了浏览器、跑不了 playwright。联网没问题（node 的 fetch 通；curl 可能因代理报 TLS 错，不是沙箱问题）。
+- **解决**：启动时加 `-c windows.sandbox="elevated"`，并保持 `--sandbox workspace-write`。实测 Edge 能启动，playwright-core 配 `channel:'msedge'` 能打开页面并截图；**浏览器启动参数必须加 `--no-sandbox`**（再加 `--disable-gpu` 更稳），否则 Edge 会崩（退出码 2147483651）。
+- 装依赖：pnpm 的全局 store 在项目目录外，沙箱会拒绝写锁（`ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK`）。要么把 store 设到项目内（`pnpm config set store-dir`/`--store-dir`），要么用 `--add-dir` 放行；也可以让别的工人先装好依赖。这条没实测，做的时候先小试。
+- **不要**用 `--dangerously-bypass-approvals-and-sandbox`：会被权限分类器拦下，且确实是关掉沙箱，不是正当手段。
+- 提升模式会用独立的沙箱账户，是否改动了系统设置没有验证；第一次用先告诉用户一句。
+- 通过 `codex exec` 直接调用时的写法：`codex exec -c windows.sandbox="elevated" --sandbox workspace-write -m gpt-6.2-sol -C <目录> - < 提示词文件`。
+
+**项目在用户电脑上、通过远程命令操作时**（例如共享项目的 `~/.hourlypc/<项目>` 命令）：`run-agent.ps1` 跑在本机，够不到远程文件。做法是把提示词和一个启动脚本放进项目的 `.orchestrate/`，用远程命令后台启动 `opencode run --auto -m <模型> "$(cat 提示词)"` 或 `codex exec ... - < 提示词`，输出写日志，结束时写一个 `.exit` 文件；主控用后台循环等 `.exit` 出现。台账与派工记录仍要手写。
 
 **调用外部后端**：用 PowerShell 工具运行（耗时长，一律 `run_in_background: true`，完成时你会收到通知，不要轮询）：
 
