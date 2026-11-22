@@ -44,11 +44,11 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 | 后端 | 重活（实现、修复、交叉审查） | 轻活（便宜的批量小改） |
 |---|---|---|
 | `codex` | `gpt-6.2-sol`（用户机器上的默认；没有就用 `gpt-5.5`） | `gpt-6.2-sol`（Codex 不分档） |
-| `claude` | `opus` | `sonnet` |
-| `opencode`，**有 Go 订阅** | **不派重活**（重活交给 claude opus 或 codex gpt-6.2-sol） | `opencode-go/deepseek-v4.1-flash` |
+| `claude` | `sonnet` | `sonnet` |
+| `opencode`，**有 Go 订阅** | **不派重活**（重活交给 codex gpt-6.2-sol 或 claude sonnet） | `opencode-go/deepseek-v4.1-flash` |
 | `opencode`，**无 Go 订阅**，或 **Go 到限额后用户确认可以用免费** | `opencode/big-pickle`（只在 codex 和 claude 都不可用时） | `opencode/deepseek-v4.1-flash-free` |
 
-**分工原则（用户 2026-11 指定）**：OpenCode Go 套餐额度有限，只用 `deepseek-v4.1-flash` 干轻活（机械搬运、批量小改、跑脚本、装依赖、浏览器走查）；重活（核心逻辑、权限/安全、复杂实现、修复、交叉审查）交给 `claude opus` 或 `codex gpt-6.2-sol`。`opencode-go/deepseek-v4-pro` 不要作为默认，用了额度很快耗光。
+**分工原则（用户 2026-11 指定）**：OpenCode Go 套餐额度有限，只用 `deepseek-v4.1-flash` 干轻活（机械搬运、批量小改、跑脚本、装依赖、浏览器走查）；重活（核心逻辑、权限/安全、复杂实现、修复、交叉审查）交给 `codex gpt-6.2-sol` 或 `claude sonnet`。Go 的活**尽量都派 `deepseek-v4.1-flash`**（额度高）；`deepseek-v4-pro` 等 Pro 模型额度很少，不要用，除非用户指定。
 
 **思考强度**由主控按任务决定：简单搬运、机械改动用低档；核心逻辑、权限、并发、疑难排查用高档。Codex 用 `-c model_reasoning_effort="low|medium|high"`，OpenCode 用 `--variant`，Claude 子 agent 用 Agent 的 `effort`（用户没明确要求时不设）。不确定就 medium，并在台账里写一句。
 
