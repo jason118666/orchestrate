@@ -46,7 +46,7 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 | `codex` | `gpt-6.2-sol`（用户机器上的默认；没有就用 `gpt-5.5`） | `gpt-6.2-sol`（Codex 不分档） |
 | `claude` | `opus` | `sonnet` |
 | `opencode`，**有 Go 订阅** | **不派重活**（重活交给 claude opus 或 codex gpt-6.2-sol） | `opencode-go/deepseek-v4.1-flash` |
-| `opencode`，**无 Go / Go 额度用完** | `opencode/big-pickle`（只在 codex 和 claude 都不可用时） | `opencode/deepseek-v4.1-flash-free` |
+| `opencode`，**无 Go 订阅**，或 **Go 到限额后用户确认可以用免费** | `opencode/big-pickle`（只在 codex 和 claude 都不可用时） | `opencode/deepseek-v4.1-flash-free` |
 
 **分工原则（用户 2026-11 指定）**：OpenCode Go 套餐额度有限，只用 `deepseek-v4.1-flash` 干轻活（机械搬运、批量小改、跑脚本、装依赖、浏览器走查）；重活（核心逻辑、权限/安全、复杂实现、修复、交叉审查）交给 `claude opus` 或 `codex gpt-6.2-sol`。`opencode-go/deepseek-v4-pro` 不要作为默认，用了额度很快耗光。
 
@@ -56,8 +56,7 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 
 1. 运行 `opencode models`，输出里有 `opencode-go/` 开头的模型 → 有 Go 订阅，用 Go 套；没有 → 用免费套。
 2. Go 的模型 ID 会随官方调整。表里的 ID 在 `opencode models` 输出里找不到时，从输出里挑同系列最接近的，写进台账；找不到同系列就直接用免费套。
-3. 用 Go 套时，任务失败且 `.log` 里出现 quota、limit、usage、429、insufficient 之类字样 → 判定额度用完，本会话后面全部改用免费套，台账记一句，并告诉用户。同一任务换免费套重派一次。
-   **额度用完时也可能不报错、只是一直没有输出**（实测：日志停在 `> build · <模型名>` 一行，多个 Go 模型同时挂住，免费的 `opencode/big-pickle` 正常）。所以每个 opencode 任务派出后 2–3 分钟内要看一眼日志有没有增长；不增长就用一句 `opencode run -m <模型> '只回复OK'`（加 timeout 60）测一下，同样挂住就按额度用完处理。不要等任务自己超时。
+3. Go 到限额的处理见第 6 节「限额」。**不要自动改用免费套**，必须先问用户。
 4. 免费模型可能下线。`opencode/` 模型报"不存在"时，从 `opencode models` 里挑一个带 `-free` 的顶上，写进台账。
 
 **设计 / 审美类任务**（界面、页面、配色排版、图表、PPT、图标、文案语气这类"好不好看"占主导的活）：
@@ -89,13 +88,14 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 **调用外部后端**：用 PowerShell 工具运行（耗时长，一律 `run_in_background: true`，完成时你会收到通知，不要轮询）：
 
 ```powershell
-& "$HOME\.claude\skills\orchestrate\run-agent.ps1" -Backend codex -Mode write -WorkDir <目录> -PromptFile <提示词文件> -OutFile <输出文件> -Model <模型> -Task "<任务 N 角色：名字>" [-Note <备注>] [-TimeoutMin 60]
+& "$HOME\.claude\skills\orchestrate\run-agent.ps1" -Backend codex -Mode write -WorkDir <目录> -PromptFile <提示词文件> -OutFile <输出文件> -Model <模型> -Task "<任务 N 角色：名字>" [-Note <备注>] [-TimeoutMin 20] [-StallMin 5]
 ```
 
 - `-Mode read`：只读（Codex 用只读沙箱；OpenCode 在提示里禁止改文件）。探索和审查用这个。
 - `-Mode write`：允许改工作目录里的文件。
 - `-Task` 必填（写法见第 2 节「派工记录」），`-Note` 写换模型、降级之类的原因。
-- 结果看 `<输出文件>.status.json` 里的 `status`，详情看 `<输出文件>`，出错看 `<输出文件>.log`。
+- 结果看 `<输出文件>.status.json` 里的 `status`（含 `QUOTA`、`STALLED`，见第 6 节），详情看 `<输出文件>`，出错看 `<输出文件>.log`。
+- `-TimeoutMin` 默认 20；`-StallMin` 是日志多少分钟不动就终止，opencode 默认 5，codex 默认关闭（高强度思考时可能几分钟没输出）。
 
 ## 2. 工作区和台账
 
@@ -212,7 +212,30 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 | `DONE_WITH_CONCERNS` | 先读顾虑。关于正确性或越界的先处理；只是意见的记台账 |
 | `NEEDS_CONTEXT` | 补信息，重新派 |
 | `BLOCKED` | 缺上下文 → 补；太难 → 换更强的模型或换后端；太大 → 拆小；计划错 → 写裁决改计划 |
+| `QUOTA` | 到限额，按下面「限额」处理：**停下来找用户** |
+| `STALLED` | 日志 `StallMin` 分钟没动，脚本已终止它。opencode 先做一次探测（见「限额」）；不是限额就按 `FAILED` 处理 |
 | `TIMEOUT` / `FAILED` / `NO_STATUS` | 看 `.log`。CLI 本身出错（没登录、参数变了）→ 告诉用户；工人跑偏 → 换后端重派一次 |
+
+### 限额（Codex 和 OpenCode Go）
+
+**怎么发现**（`run-agent.ps1` 自动做，结果在 `status.json`）：
+
+- 工人没正常完成，且 `.log` 里有 usage limit、quota、insufficient、rate limit、429、402 之类的字样 → `status` 为 `QUOTA`，匹配到的那行在 `quotaHint`，也会写进派工表的备注。Codex 到限额会直接报 "You've hit your usage limit" 并退出。
+- OpenCode Go 到限额时**可能不报错、只是挂住**（实测：日志停在 `> build · <模型名>`）。所以 opencode 默认日志 5 分钟不动就终止，状态 `STALLED`。拿到 `STALLED` 时用同一个模型探测一次：
+  `opencode run -m <模型> '只回复OK'`，60 秒超时。也挂住或报额度错误 → 按 `QUOTA` 处理。
+- 单次派工最长 20 分钟（`-TimeoutMin`）。超时且日志里有限额字样同样是 `QUOTA`。
+
+**发现后怎么做**：
+
+1. **立刻停止往这个后端派新任务**。已经在跑的其他工人等它们跑完，但不再派新的，包括别的后端。
+2. **不自动换模型**，尤其**不能自动改用 OpenCode 免费模型**。
+3. 台账记一句，派工表备注写明。
+4. 结束本轮，向用户汇报（简短）：
+   - 哪个后端、哪个模型到了限额，当时在做哪个任务；
+   - `quotaHint` 原文，有重置时间就写出来；
+   - 已完成的任务和还剩的任务；
+   - 让用户选：**等额度恢复后继续** / **改用 OpenCode 免费模型** / **改用 Claude 或另一个后端** / **先暂停**。
+5. 用户选了之后按选择继续，选择写进台账，本会话后面不再重复问同一个后端。
 
 **不要让同一个工人原样重试。** 它卡住了，就一定要改变一点什么。
 一个任务失败，只影响依赖它的任务，其他独立任务继续。需要回退提交时，列出提交让用户确认，不要自己 `reset --hard`。
@@ -245,6 +268,7 @@ Get-Command codex, opencode -ErrorAction SilentlyContinue | Select-Object Name, 
 1. 不可逆或破坏性操作；
 2. 安全相关（密钥、权限、认证）；
 3. 影响项目外部的动作（push、merge、发布）；
-4. 计划错到往哪走都是猜。
+4. 计划错到往哪走都是猜；
+5. Codex 或 OpenCode Go 到限额（第 6 节「限额」）。
 
 其他情况你自己裁决、记台账、继续。任务之间不要问"要继续吗"。

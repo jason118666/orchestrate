@@ -24,7 +24,8 @@ param(
   [Parameter(Mandatory)][string]$OutFile,
   [ValidateSet('read', 'write')][string]$Mode = 'read',
   [string]$Model = '',
-  [int]$TimeoutMin = 60,
+  [int]$TimeoutMin = 20,
+  [int]$StallMin = -1,  # 日志连续这么多分钟没增长就判定卡住并终止；-1 用后端默认，0 关闭
   [string]$Task = '',   # 派工记录里的任务名，例如 "任务 2 审查：登录接口"
   [string]$Note = ''    # 派工记录里的备注，例如 "Go 额度用完，改用免费模型"
 )
@@ -43,6 +44,7 @@ $Backends = @{
     ModelArgs  = @('-m', '{MODEL}')
     PromptVia  = 'stdin'     # stdin：prompt 从标准输入传入
     WritesOut  = $true       # CLI 自己会写 OutFile
+    StallMin   = 0           # 关闭：Codex 高强度思考时可能几分钟没输出，靠 TimeoutMin 兜底
   }
   opencode = @{
     Exe        = 'opencode'
@@ -54,6 +56,7 @@ $Backends = @{
     ModelArgs  = @('-m', '{MODEL}')  # 格式：provider/model，例如 anthropic/claude-sonnet-5-5
     PromptVia  = 'file'
     WritesOut  = $false      # 最终回复取自 stdout
+    StallMin   = 5           # 实测：Go 额度用完时可能不报错，日志停在 "> build · <模型>" 一直不动
   }
 }
 # ======================================================
@@ -106,10 +109,19 @@ $job = Start-Job -ScriptBlock {
   $LASTEXITCODE
 } -ArgumentList $cfg.Exe, $argList, $WorkDir, $PromptFile, $cfg.PromptVia, $LogFile
 
-$finished = Wait-Job $job -Timeout ($TimeoutMin * 60)
-$timedOut = -not $finished
+if ($StallMin -lt 0) { $StallMin = $cfg.StallMin }
+$timedOut = $false
+$stalled = $false
+$lastSize = -1
+$lastGrowth = Get-Date
+while (-not (Wait-Job $job -Timeout 15)) {
+  $size = if (Test-Path -LiteralPath $LogFile) { (Get-Item -LiteralPath $LogFile).Length } else { 0 }
+  if ($size -ne $lastSize) { $lastSize = $size; $lastGrowth = Get-Date }
+  if (((Get-Date) - $start).TotalMinutes -ge $TimeoutMin) { $timedOut = $true; break }
+  if ($StallMin -gt 0 -and ((Get-Date) - $lastGrowth).TotalMinutes -ge $StallMin) { $stalled = $true; break }
+}
 $exitCode = $null
-if ($timedOut) {
+if ($timedOut -or $stalled) {
   Stop-Job $job
 } else {
   $last = Receive-Job $job -ErrorAction SilentlyContinue | Select-Object -Last 1
@@ -127,8 +139,18 @@ if (Test-Path -LiteralPath $OutFile) {
   $m = Select-String -LiteralPath $OutFile -Pattern '^\s*\**STATUS\**\s*[:：]\s*\**\s*([A-Z_]+)' | Select-Object -Last 1
   if ($m) { $statusLine = $m.Matches[0].Groups[1].Value }
 }
-if (-not $statusLine) {
-  $statusLine = if ($timedOut) { 'TIMEOUT' } elseif ($exitCode -ne 0) { 'FAILED' } else { 'NO_STATUS' }
+
+# 没正常完成时，看日志里有没有限额/额度类报错。有就标 QUOTA，交给主控停下来找用户。
+$quotaHint = ''
+$abnormal = $timedOut -or $stalled -or ($exitCode -ne 0) -or (-not $statusLine)
+if ($abnormal -and (Test-Path -LiteralPath $LogFile)) {
+  $q = Select-String -LiteralPath $LogFile -Pattern 'usage limit|usage_limit|quota|insufficient|spend limit|credit balance|rate[-_ ]?limit|too many requests|\b429\b|\b402\b' | Select-Object -Last 1
+  if ($q) { $quotaHint = $q.Line.Trim(); if ($quotaHint.Length -gt 200) { $quotaHint = $quotaHint.Substring(0, 200) } }
+}
+if ($quotaHint) {
+  $statusLine = 'QUOTA'
+} elseif (-not $statusLine) {
+  $statusLine = if ($stalled) { 'STALLED' } elseif ($timedOut) { 'TIMEOUT' } elseif ($exitCode -ne 0) { 'FAILED' } else { 'NO_STATUS' }
 }
 
 $result = [ordered]@{
@@ -138,6 +160,8 @@ $result = [ordered]@{
   workdir     = $WorkDir
   exitCode    = $exitCode
   timedOut    = $timedOut
+  stalled     = $stalled
+  quotaHint   = $quotaHint
   durationSec = [int]((Get-Date) - $start).TotalSeconds
   status      = $statusLine
   outFile     = $OutFile
@@ -152,7 +176,8 @@ $taskName = if ($Task) { $Task } else { [IO.Path]::GetFileNameWithoutExtension($
 $modelName = if ($Model) { $Model } else { '(CLI 默认)' }
 $dur = $result.durationSec
 $durText = if ($dur -ge 60) { '{0}m{1:00}s' -f [int][math]::Floor($dur / 60), ($dur % 60) } else { "${dur}s" }
-$row = '| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |' -f (Get-Date -Format 'MM-dd HH:mm'), (Format-Cell $taskName), $Backend, (Format-Cell $modelName), $Mode, $statusLine, $durText, (Format-Cell $Note)
+$noteText = (@($Note, $(if ($quotaHint) { "限额: $quotaHint" })) | Where-Object { $_ }) -join '；'
+$row = '| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |' -f (Get-Date -Format 'MM-dd HH:mm'), (Format-Cell $taskName), $Backend, (Format-Cell $modelName), $Mode, $statusLine, $durText, (Format-Cell $noteText)
 $utf8 = New-Object System.Text.UTF8Encoding $false
 if (-not (Test-Path -LiteralPath $dispatchLog)) {
   [IO.File]::WriteAllText($dispatchLog, "| 时间 | 任务 | 后端 | 模型 | 模式 | 结果 | 耗时 | 备注 |`n|---|---|---|---|---|---|---|---|`n", $utf8)
